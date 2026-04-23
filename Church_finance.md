@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Donation Memo Matcher</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --blue:        #007AFF;
+    --blue-light:  rgba(0,122,255,0.10);
+    --green:       #34C759;
+    --green-light: rgba(52,199,89,0.10);
+    --red:         #FF3B30;
+    --red-light:   rgba(255,59,48,0.08);
+    --orange:      #FF9500;
+    --orange-light:rgba(255,149,0,0.10);
+    --gray3: #C7C7CC;
+    --gray4: #D1D1D6;
+    --gray5: #E5E5EA;
+    --gray6: #F2F2F7;
+    --bg:           #F2F2F7;
+    --surface:      #FFFFFF;
+    --text-primary:   #1C1C1E;
+    --text-secondary: #3A3A3C;
+    --text-tertiary:  #8E8E93;
+    --text-disabled:  #AEAEB2;
+    --separator:        rgba(60,60,67,0.12);
+    --separator-opaque: #C6C6C8;
+    --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+    font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+
+  /* ── Nav Bar ── */
+  .nav-bar {
+    background: rgba(242,242,247,0.88);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--separator-opaque);
+    position: sticky; top: 0; z-index: 100;
+    height: 52px;
+    padding: 0 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .nav-title { font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.02em; }
+  .nav-badge {
+    font-size: 0.75rem; font-weight: 500;
+    color: var(--text-tertiary);
+    background: var(--gray5);
+    padding: 2px 9px; border-radius: 99px;
+  }
+
+  /* ── Page Header ── */
+  .page-header {
+    max-width: 680px; margin: 0 auto;
+    padding: 36px 20px 4px;
+  }
+  .page-header h1 {
+    font-size: 2.25rem; font-weight: 700;
+    letter-spacing: -0.03em; line-height: 1.2;
+  }
+  .page-header p {
+    margin-top: 8px; font-size: 1.0625rem;
+    color: var(--text-tertiary); font-weight: 400;
+  }
+
+  /* ── Main ── */
+  main {
+    max-width: 680px; margin: 0 auto;
+    padding: 20px 20px 80px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  /* ── Section label ── */
+  .section-label {
+    font-size: 0.9375rem; font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0 4px; margin-bottom: -2px; margin-top: 6px;
+  }
+
+  /* ── Progress Steps ── */
+  .steps-card {
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 16px 20px;
+    display: flex; align-items: center;
+  }
+  .step-item {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 5px; position: relative;
+  }
+  .step-item:not(:last-child)::after {
+    content: '';
+    position: absolute; top: 13px;
+    left: calc(50% + 15px); right: calc(-50% + 15px);
+    height: 1.5px; background: var(--gray4);
+    transition: background 0.4s; z-index: 0;
+  }
+  .step-item.done:not(:last-child)::after  { background: var(--green); }
+  .step-circle {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--gray5); color: var(--text-tertiary);
+    font-size: 0.75rem; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; z-index: 1;
+    border: 1.5px solid var(--gray4);
+    transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .step-item.active .step-circle {
+    background: var(--blue); color: white; border-color: var(--blue);
+    box-shadow: 0 0 0 4px rgba(0,122,255,0.12); transform: scale(1.1);
+  }
+  .step-item.done .step-circle {
+    background: var(--green); color: white; border-color: var(--green);
+  }
+  .step-item.done .step-circle .step-num-inner { display: none; }
+  .step-item.done .step-circle::after { content: '✓'; font-size: 0.75rem; }
+  .step-text {
+    font-size: 0.8125rem; font-weight: 500;
+    color: var(--text-tertiary); white-space: nowrap;
+  }
+  .step-item.active .step-text { color: var(--blue); font-weight: 600; }
+  .step-item.done  .step-text  { color: var(--green); }
+
+  /* ── Upload Cards ── */
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 520px) { .upload-grid { grid-template-columns: 1fr; } }
+
+  .upload-card {
+    background: var(--surface);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-sm);
+    padding: 22px 16px 18px; text-align: center;
+    cursor: pointer; position: relative;
+    border: 1.5px solid transparent;
+    transition: all 0.2s ease;
+  }
+  .upload-card:hover           { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .upload-card.drag-over       { border-color: var(--blue); background: rgba(0,122,255,0.04); }
+  .upload-card.loaded          { border-color: var(--green); background: rgba(52,199,89,0.04); }
+  .upload-card input[type=file]{ position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+
+  .upload-icon-wrap {
+    width: 48px; height: 48px; border-radius: 13px;
+    background: var(--gray6); margin: 0 auto 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.375rem; transition: background 0.2s;
+  }
+  .upload-card.loaded .upload-icon-wrap { background: rgba(52,199,89,0.12); }
+
+  .upload-chip {
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--blue);
+    background: rgba(0,122,255,0.08);
+    padding: 2px 8px; border-radius: 99px; margin-bottom: 7px;
+    display: inline-block;
+  }
+  .upload-card.loaded .upload-chip { color: var(--green); background: rgba(52,199,89,0.10); }
+  .upload-title { font-size: 1.0625rem; font-weight: 600; margin-bottom: 3px; letter-spacing: -0.01em; }
+  .upload-desc  { font-size: 0.9375rem; color: var(--text-tertiary); line-height: 1.45; }
+  .upload-filename {
+    margin-top: 9px; font-size: 0.75rem; font-weight: 500;
+    color: var(--green); background: rgba(52,199,89,0.08);
+    padding: 3px 10px; border-radius: 7px; display: none;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── Buttons ── */
+  .run-btn {
+    width: 100%; padding: 16px;
+    background: var(--blue); color: white;
+    border: none; border-radius: var(--r-lg);
+    font-size: 1.0625rem; font-weight: 600; font-family: inherit;
+    cursor: pointer; letter-spacing: -0.01em;
+    box-shadow: 0 2px 10px rgba(0,122,255,0.25);
+    transition: all 0.18s ease;
+  }
+  .run-btn:hover:not(:disabled) { background: #0066DD; transform: translateY(-1px); box-shadow: 0 4px 18px rgba(0,122,255,0.35); }
+  .run-btn:active:not(:disabled){ transform: scale(0.98); }
+  .run-btn:disabled { background: var(--gray5); color: var(--text-disabled); cursor: not-allowed; box-shadow: none; }
+
+  .download-btn {
+    width: 100%; padding: 16px;
+    background: var(--surface); border: 1.5px solid var(--green); color: var(--green);
+    border-radius: var(--r-lg); font-size: 1.0625rem; font-weight: 600; font-family: inherit;
+    cursor: pointer; letter-spacing: -0.01em; display: none;
+    transition: all 0.18s ease;
+  }
+  .download-btn.visible { display: block; }
+  .download-btn:hover   { background: var(--green); color: white; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(52,199,89,0.30); }
+  .download-btn:active  { transform: scale(0.98); }
+
+  /* ── Log ── */
+  .log-box {
+    background: var(--surface); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm); border-left: 3px solid var(--blue);
+    padding: 12px 16px; font-family: 'SF Mono', 'Menlo', monospace;
+    font-size: 0.75rem; max-height: 190px; overflow-y: auto; display: none;
+  }
+  .log-box.visible { display: block; }
+  .log-line { padding: 1.5px 0; line-height: 1.7; }
+  .log-line.info { color: var(--text-tertiary); }
+  .log-line.ok   { color: var(--green); }
+  .log-line.warn { color: var(--orange); }
+  .log-line.err  { color: var(--red); }
+  .log-line.head { color: var(--blue); font-weight: 600; }
+
+  /* ── Summary ── */
+  .summary-grid {
+    display: none; grid-template-columns: repeat(4,1fr); gap: 10px;
+  }
+  .summary-grid.visible { display: grid; }
+  @media (max-width: 520px) { .summary-grid { grid-template-columns: repeat(2,1fr); } }
+
+  .stat-card {
+    background: var(--surface); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm); padding: 16px 14px; text-align: center;
+  }
+  .stat-val   { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.03em; color: var(--blue); line-height: 1; }
+  .stat-label { font-size: 0.875rem; color: var(--text-tertiary); font-weight: 500; margin-top: 5px; }
+
+  /* Total card: fixed 2-col width so dollar amount never wraps */
+  #totalCard { grid-column: span 2; }
+
+  /* Unmatched: always full width (span 4) so name list has plenty of room */
+  .unmatched-list { list-style: none; max-height: 0; overflow: hidden; transition: max-height 0.35s ease; }
+  #unmatchedCard { text-align: left; grid-column: span 4; }
+  #unmatchedCard .stat-val { color: var(--red); }
+  #unmatchedCard.has-names { grid-column: span 4; }
+  #unmatchedCard.has-names .unmatched-list {
+    max-height: 600px; margin-top: 10px;
+    border-top: 0.5px solid var(--separator); padding-top: 8px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px;
+  }
+  .unmatched-list li {
+    padding: 5px 0; border-bottom: 0.5px solid var(--separator);
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .unmatched-list li:last-child { border-bottom: none; }
+  .um-name {
+    font-size: 0.9375rem; font-weight: 600; color: var(--red);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .um-name::before { content: '\2715'; font-size: 0.7rem; opacity: 0.5; }
+  .um-amt    { font-size: 0.875rem; font-weight: 400; color: var(--text-tertiary); }
+  .um-reason { font-size: 0.875rem; color: var(--orange); padding-left: 14px; }
+  .um-reason::before { content: '\21B3\0020'; opacity: 0.5; }
+
+  /* ── Table ── */
+  .preview-wrap {
+    display: none; background: var(--surface);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-sm); overflow: hidden;
+  }
+  .preview-wrap.visible { display: block; }
+  .preview-header {
+    padding: 13px 18px; border-bottom: 0.5px solid var(--separator);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .preview-header h3 { font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em; }
+  .preview-header span {
+    font-size: 0.8125rem; color: var(--text-tertiary); font-weight: 500;
+    background: var(--gray6); padding: 2px 9px; border-radius: 99px;
+  }
+  .table-scroll { overflow-x: auto; max-height: 360px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+  thead th {
+    background: var(--gray6); padding: 10px 13px;
+    text-align: left; font-weight: 600; font-size: 0.8125rem;
+    color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;
+    white-space: nowrap; position: sticky; top: 0; z-index: 1;
+    border-bottom: 0.5px solid var(--separator);
+  }
+  tbody td {
+    padding: 10px 13px; border-bottom: 0.5px solid var(--separator);
+    white-space: nowrap; max-width: 260px;
+    overflow: hidden; text-overflow: ellipsis;
+    color: var(--text-secondary);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--gray6); }
+
+  .tag {
+    display: inline-flex; align-items: center;
+    padding: 3px 10px; border-radius: 99px;
+    font-size: 0.8125rem; font-weight: 600;
+  }
+  .tag-matched   { background: rgba(52,199,89,0.10);  color: var(--green); }
+  .tag-unmatched { background: rgba(255,59,48,0.08);  color: var(--red); }
+  .tag-skipped   { background: rgba(255,149,0,0.10);  color: var(--orange); }
+
+  .separator-row td {
+    background: var(--gray6); color: var(--text-tertiary);
+    font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 7px 13px;
+    border-top: 0.5px solid var(--separator); border-bottom: 0.5px solid var(--separator);
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .summary-grid.visible .stat-card { animation: fadeUp 0.28s ease both; }
+  .summary-grid.visible .stat-card:nth-child(1){ animation-delay:0.04s; }
+  .summary-grid.visible .stat-card:nth-child(2){ animation-delay:0.08s; }
+  .summary-grid.visible .stat-card:nth-child(3){ animation-delay:0.12s; }
+  .summary-grid.visible .stat-card:nth-child(4){ animation-delay:0.16s; }
+
+  /* ── Spinner ── */
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+    border-radius: 50%; animation: spin 0.65s linear infinite;
+    margin-right: 8px; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--gray4); border-radius: 99px; }
+</style>
+</head>
+<body>
+
+<nav class="nav-bar">
+  <span class="nav-title">Donation Memo Matcher</span>
+  <span class="nav-badge">Chase · Zelle</span>
+</nav>
+
+<div class="page-header">
+  <h1>Donation Memo Matcher</h1>
+  <p>Upload Chase PDF and Zelle CSV to automatically match memos and export to Excel.</p>
+</div>
+
+<main>
+
+  <div class="steps-card">
+    <div class="step-item active" id="step1">
+      <div class="step-circle"><span class="step-num-inner">1</span></div>
+      <span class="step-text">Upload</span>
+    </div>
+    <div class="step-item" id="step2">
+      <div class="step-circle"><span class="step-num-inner">2</span></div>
+      <span class="step-text">Processing</span>
+    </div>
+    <div class="step-item" id="step3">
+      <div class="step-circle"><span class="step-num-inner">3</span></div>
+      <span class="step-text">Results</span>
+    </div>
+    <div class="step-item" id="step4">
+      <div class="step-circle"><span class="step-num-inner">4</span></div>
+      <span class="step-text">Download</span>
+    </div>
+  </div>
+
+  <p class="section-label">Select Files</p>
+  <div class="upload-grid">
+    <div class="upload-card" id="pdfCard">
+      <input type="file" id="pdfInput" accept=".pdf">
+      <div class="upload-icon-wrap">📄</div>
+      <div class="upload-chip">File 1 · PDF</div>
+      <div class="upload-title">Payment Activity</div>
+      <div class="upload-desc">Chase weekly payment activity<br>Date · Name · Amount · Memo</div>
+      <div class="upload-filename" id="pdfName"></div>
+    </div>
+    <div class="upload-card" id="csvCard">
+      <input type="file" id="csvInput" accept=".csv,.xlsx,.xls">
+      <div class="upload-icon-wrap">📊</div>
+      <div class="upload-chip">File 2 · CSV</div>
+      <div class="upload-title">Zelle Activity</div>
+      <div class="upload-desc">Chase account activity CSV<br>Details · Date · Description · Amount</div>
+      <div class="upload-filename" id="csvName"></div>
+    </div>
+  </div>
+
+  <button class="run-btn" id="runBtn" disabled onclick="runAll()">Upload both files to activate</button>
+
+  <div class="log-box" id="logBox"></div>
+
+  <p class="section-label" id="summaryLabel" style="display:none">Results Summary</p>
+  <div class="summary-grid" id="summaryGrid">
+    <div class="stat-card"><div class="stat-val" id="statTotal">0</div><div class="stat-label">Zelle Entries</div></div>
+    <div class="stat-card"><div class="stat-val" id="statMatched">0</div><div class="stat-label">Memos Matched</div></div>
+    <div class="stat-card" id="totalCard"><div class="stat-val" id="statTotal2">$0</div><div class="stat-label">Total Donations</div></div>
+    <div class="stat-card" id="unmatchedCard"><div class="stat-val" id="statUnmatched">0</div><div class="stat-label">Unmatched</div><ul class="unmatched-list" id="unmatchedList"></ul></div>
+  </div>
+
+  <p class="section-label" id="previewLabel" style="display:none">Preview</p>
+  <div class="preview-wrap" id="previewWrap">
+    <div class="preview-header">
+      <h3>Matching Results</h3>
+      <span id="previewCount"></span>
+    </div>
+    <div class="table-scroll"><table id="previewTable"></table></div>
+  </div>
+
+  <button class="download-btn" id="downloadBtn" onclick="downloadExcel()">↓ Download Excel (.xlsx)</button>
+
+</main>
+
+<script>
+// ─── pdf.js worker ───────────────────────────────────────────
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ─── State ───────────────────────────────────────────────────
+let pdfFile = null, csvFile = null, resultRows = [], separatorIndex = -1;
+
+// ─── File inputs ─────────────────────────────────────────────
+document.getElementById('pdfInput').addEventListener('change', e => {
+  pdfFile = e.target.files[0];
+  if (pdfFile) {
+    document.getElementById('pdfName').textContent = pdfFile.name;
+    document.getElementById('pdfName').style.display = 'inline-block';
+    document.getElementById('pdfCard').classList.add('loaded');
+  }
+  updateRunBtn();
+});
+document.getElementById('csvInput').addEventListener('change', e => {
+  csvFile = e.target.files[0];
+  if (csvFile) {
+    document.getElementById('csvName').textContent = csvFile.name;
+    document.getElementById('csvName').style.display = 'inline-block';
+    document.getElementById('csvCard').classList.add('loaded');
+  }
+  updateRunBtn();
+});
+
+// Drag-and-drop
+['pdfCard','csvCard'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', e => {
+    e.preventDefault(); el.classList.remove('drag-over');
+    const input = el.querySelector('input[type=file]');
+    const dt = new DataTransfer();
+    dt.items.add(e.dataTransfer.files[0]);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change'));
+  });
+});
+
+function updateRunBtn() {
+  const btn = document.getElementById('runBtn');
+  if (pdfFile && csvFile) {
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Memo Matching';
+  }
+}
+
+// ─── Logging ─────────────────────────────────────────────────
+function log(msg, type='info') {
+  const box = document.getElementById('logBox');
+  box.classList.add('visible');
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  const time = new Date().toLocaleTimeString('ko-KR');
+  line.textContent = `[${time}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() {
+  document.getElementById('logBox').innerHTML = '';
+}
+
+// ─── Date helpers ─────────────────────────────────────────────
+function parsePdfDate(str) {
+  // "Mar 11, 2026" → Date
+  const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  const m = str.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+  if (!m) return null;
+  const mo = months[m[1].substring(0,3)];
+  if (mo === undefined) return null;
+  return new Date(parseInt(m[3]), mo, parseInt(m[2]));
+}
+
+function parseCsvDate(str) {
+  // "03/11/2026" or "03/11/26" or "2026-03-11" or "2026-03-11 00:00:00"
+  if (!str) return null;
+  let s = String(str).trim();
+  // datetime string
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    let yr = parseInt(m[3]);
+    if (yr < 100) yr += 2000;
+    return new Date(yr, parseInt(m[1])-1, parseInt(m[2]));
+  }
+  return null;
+}
+
+function toYMD(d) {
+  if (!d) return '';
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function dayDiff(a, b) {
+  if (!a || !b) return 9999;
+  return Math.abs(Math.round((a - b) / 86400000));
+}
+
+// ─── PDF Parsing ──────────────────────────────────────────────
+async function parsePdf(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  let allText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const tc = await page.getTextContent();
+    // Get items with position info for layout reconstruction
+    const items = tc.items.map(it => ({
+      text: it.str,
+      x: Math.round(it.transform[4]),
+      y: Math.round(it.transform[5])
+    }));
+    // Group by Y position (same line)
+    const lines = {};
+    items.forEach(it => {
+      const key = it.y;
+      if (!lines[key]) lines[key] = [];
+      lines[key].push(it);
+    });
+    // Sort lines top-to-bottom, items left-to-right
+    const sortedYs = Object.keys(lines).map(Number).sort((a,b) => b-a);
+    sortedYs.forEach(y => {
+      const row = lines[y].sort((a,b) => a.x - b.x);
+      allText += row.map(r => r.text).join(' ') + '\n';
+    });
+  }
+  return allText;
+}
+
+function extractPdfRecords(rawText) {
+  // PDF structure per entry (may span lines):
+  // DATE  Completed  [SENDER]  In moments  $AMOUNT
+  // "MEMO TEXT"  (may be on next or prev line, or missing)
+  // Separator: ────────────── line
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const records = [];
+
+  const dateRe = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}$/;
+  const amountRe = /\$([\d,]+\.\d{2})$/;
+  const memoRe = /^"(.+)"$/s;
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Skip header line
+    if (line.includes('Date received') && line.includes('Status')) { i++; continue; }
+
+    // Check for date
+    const dateMatch = line.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec\s+\d{1,2},\s+\d{4})/);
+    if (!dateMatch) { i++; continue; }
+
+    // Collect all lines for this transaction until next date or end
+    const txLines = [line];
+    let j = i + 1;
+    while (j < lines.length) {
+      const next = lines[j];
+      if (next.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/)) break;
+      txLines.push(next);
+      j++;
+    }
+
+    // Parse the transaction block
+    const fullBlock = txLines.join(' ');
+
+    // Extract date
+    const dMatch = fullBlock.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/);
+    if (!dMatch) { i = j; continue; }
+    const dateStr = dMatch[0];
+    const txDate = parsePdfDate(dateStr);
+
+    // Extract amount (last $ value)
+    const amounts = [...fullBlock.matchAll(/\$([\d,]+\.\d{2})/g)];
+    if (!amounts.length) { i = j; continue; }
+    const amountStr = amounts[amounts.length - 1][1].replace(/,/g, '');
+    const amount = parseFloat(amountStr);
+    if (amount < 0) { i = j; continue; } // skip refunds
+
+    // Extract sender name: between "Completed" and "In moments"
+    const senderMatch = fullBlock.match(/Completed\s+"[^"]*"\s+([A-Z][A-Za-z\s\-]+?)\s+In moments/s) ||
+                        fullBlock.match(/Completed\s+([A-Z][A-Za-z\s\-]+?)\s+In moments/s);
+    const sender = senderMatch ? senderMatch[1].trim() : '';
+
+    // Extract memo from individual txLines to avoid cross-transaction bleed (Bug 2 fix)
+    // Look for a line that starts and ends with quotes, or accumulate quoted fragments
+    let memo = '';
+    let memoAccum = '';
+    let inMemo = false;
+    for (const tl of txLines) {
+      const trimmed = tl.trim();
+      if (!inMemo) {
+        // Line starts a quoted memo
+        if (trimmed.startsWith('"')) {
+          inMemo = true;
+          memoAccum = trimmed.slice(1); // strip leading quote
+          if (trimmed.endsWith('"') && trimmed.length > 1) {
+            // Whole memo on one line
+            memo = memoAccum.slice(0, -1).trim(); // strip trailing quote
+            break;
+          }
+        }
+      } else {
+        // Continuation of multi-line memo
+        if (trimmed.endsWith('"')) {
+          memoAccum += trimmed.slice(0, -1); // strip trailing quote
+          memo = memoAccum.trim();
+          break;
+        } else {
+          memoAccum += trimmed;
+        }
+      }
+    }
+    // Collapse internal whitespace/newlines without adding spaces (Bug 3 fix)
+    memo = memo.split(/\s*\n\s*/).map(s => s.trim()).join('').replace(/\s{2,}/g, ' ').trim();
+
+    records.push({ date: txDate, dateStr, sender, amount, memo });
+    i = j;
+  }
+
+  return records;
+}
+
+// ─── CSV Parsing ──────────────────────────────────────────────
+function parseCsv(text) {
+  // Parse CSV respecting quoted fields
+  const rows = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cols = [];
+    let cur = '', inQ = false;
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    cols.push(cur.trim());
+    rows.push(cols);
+  }
+  return rows;
+}
+
+function extractName(description) {
+  // "ZELLE PAYMENT FROM JOHN SMITH 28386210834" → "JOHN SMITH"
+  // "Zelle payment from JOOEUN SHIN 28258887349" → "JOOEUN SHIN"
+  // Transaction ID: last token that is all digits OR alphanumeric 8+ chars
+  const prefix = /^zelle\s+payment\s+from\s+/i;
+  let s = description.replace(prefix, '').trim();
+  // Remove trailing transaction ID (all digits or mixed alphanum 8+ chars)
+  s = s.replace(/\s+[A-Z0-9]{8,}$/i, '').trim();
+  s = s.replace(/\s+\d{9,}$/, '').trim();
+  return s;
+}
+
+// ─── Fuzzy name match ─────────────────────────────────────────
+function fuzzyScore(a, b) {
+  // Partial ratio: slide shorter over longer
+  if (!a || !b) return 0;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  let best = 0;
+  for (let i = 0; i <= long.length - short.length; i++) {
+    const window = long.substr(i, short.length);
+    let matches = 0;
+    for (let k = 0; k < short.length; k++) {
+      if (short[k] === window[k]) matches++;
+    }
+    const score = matches / short.length;
+    if (score > best) best = score;
+  }
+  return best;
+}
+
+function namesMatch(csvName, pdfSender) {
+  const a = csvName.toLowerCase().trim();
+  const b = pdfSender.toLowerCase().trim();
+  if (!a || !b) return false;
+  const aTokens = a.split(/\s+/);
+  const bTokens = b.split(/\s+/);
+  if (aTokens.length === 1 || bTokens.length === 1) {
+    return fuzzyScore(aTokens[0], bTokens[0]) >= 0.5;
+  }
+  const aFirst = aTokens[0], aLast = aTokens[aTokens.length - 1];
+  const bFirst = bTokens[0], bLast = bTokens[bTokens.length - 1];
+  return fuzzyScore(aFirst, bFirst) >= 0.5 && fuzzyScore(aLast, bLast) >= 0.5;
+}
+
+// ─── Main processing ──────────────────────────────────────────
+async function runAll() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Processing...';
+  clearLog();
+  resultRows = [];
+
+  setStep(2);
+  log('=== Donation Memo Matching Started ===', 'head');
+
+  try {
+    // 1. Parse PDF
+    log('Analyzing PDF file...', 'info');
+    const pdfText = await parsePdf(pdfFile);
+    const pdfRecords = extractPdfRecords(pdfText);
+    log(`PDF: ${pdfRecords.length} records extracted`, pdfRecords.length > 0 ? 'ok' : 'err');
+    if (pdfRecords.length === 0) throw new Error('Could not extract data from PDF. Please ensure the PDF is text-based, not a scanned image.');
+
+    // 2. Parse CSV
+    log('Analyzing CSV file...', 'info');
+    const csvText = await csvFile.text();
+    const csvRows = parseCsv(csvText);
+    const header = csvRows[0];
+    const dataRows = csvRows.slice(1).filter(r => r.some(c => c.length > 0));
+    log(`CSV: ${dataRows.length} rows loaded`, 'ok');
+
+    // 3. Separate rows
+    // Col A=Details, B=PostingDate, C=Description, D=Amount
+    const zelleRows = [];    // CREDIT + "Zelle payment" → main table
+    const otherRows = [];    // everything else → bottom
+
+    for (const row of dataRows) {
+      const details = (row[0] || '').toUpperCase();
+      const desc    = (row[2] || '');
+      const isCredit = details === 'CREDIT';
+      const isZelle  = /^zelle\s+payment/i.test(desc);
+      if (isCredit && isZelle) {
+        zelleRows.push(row);
+      } else {
+        otherRows.push(row);
+      }
+    }
+    log(`Zelle rows: ${zelleRows.length}, Other: ${otherRows.length}`, 'ok');
+
+    // 4. Process Zelle rows
+    const fmtUSDinline = v => '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const processed = [];
+    // Track used PDF records to handle duplicate name+amount combinations
+    const usedPdfIdx = new Set();
+
+    let runningTotal = 0;
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+    const unmatchedNames = [];
+
+    for (const row of zelleRows) {
+      const rawDate   = row[1] || '';
+      const desc      = row[2] || '';
+      const rawAmount = row[3] || '';
+
+      // Op 3: date to YYYY-MM-DD
+      const csvDate = parseCsvDate(rawDate);
+      const dateFormatted = toYMD(csvDate);
+
+      // Op 5: extract name
+      const donorName = extractName(desc);
+
+      // Parse amount
+      const amount = parseFloat(String(rawAmount).replace(/[$,]/g, '')) || 0;
+      runningTotal += amount;
+
+      // Op 9: match memo from PDF with diagnostic tracking
+      let bestMatch = null;
+      let bestDiff = 9999;
+
+      // Diagnostic: track which conditions passed for closest partial matches
+      let nameMatched = false;      // any PDF record matched name
+      let nameAmtMatched = false;   // any PDF record matched name + amount
+      let alreadyUsed = false;      // best candidate was already used by another row
+
+      for (let pi = 0; pi < pdfRecords.length; pi++) {
+        const pr = pdfRecords[pi];
+        if (!pr.memo) continue;
+
+        const nameOk   = namesMatch(donorName, pr.sender);
+        const amountOk = Math.abs(pr.amount - amount) < 0.01;
+        const diff     = dayDiff(csvDate, pr.date);
+        const dateOk   = diff <= 2;
+
+        if (nameOk) nameMatched = true;
+        if (nameOk && amountOk) nameAmtMatched = true;
+
+        if (!nameOk || !amountOk || !dateOk) continue;
+
+        // All 3 pass — check if already used
+        if (usedPdfIdx.has(pi)) {
+          alreadyUsed = true;
+          continue;
+        }
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          bestMatch = { idx: pi, record: pr };
+        }
+      }
+
+      let memo = '';
+      if (bestMatch) {
+        memo = bestMatch.record.memo;
+        usedPdfIdx.add(bestMatch.idx);
+        matchedCount++;
+      } else {
+        unmatchedCount++;
+        // Determine the most specific failure reason
+        let reason;
+        if (alreadyUsed) {
+          reason = 'Duplicate name & amount — PDF memo already used';
+        } else if (nameAmtMatched) {
+          reason = 'Date mismatch (exceeds ±2 days)';
+        } else if (nameMatched) {
+          reason = 'Amount mismatch';
+        } else {
+          reason = 'Name not found in PDF';
+        }
+        unmatchedNames.push({ name: donorName, amount, reason });
+      }
+
+      // Build output row:
+      // Date | Donor Name | Amount | Memo | Running Total
+      processed.push({
+        type: 'zelle',
+        date: dateFormatted,
+        name: donorName,
+        amount,
+        memo,
+        total: runningTotal,
+        matched: !!bestMatch
+      });
+    }
+
+    separatorIndex = processed.length;
+    log(`Matching complete: ${matchedCount} matched, ${unmatchedCount} unmatched`, 'ok');
+
+    // 5. Other rows (no name extraction, no memo, no total)
+    for (const row of otherRows) {
+      const rawDate   = row[1] || '';
+      const desc      = row[2] || '';
+      const rawAmount = row[3] || '';
+      const csvDate   = parseCsvDate(rawDate);
+      const amount    = parseFloat(String(rawAmount).replace(/[$,]/g, '')) || 0;
+      processed.push({
+        type: 'other',
+        date: toYMD(csvDate),
+        name: desc,
+        amount,
+        memo: '',
+        total: '',
+        matched: false
+      });
+    }
+
+    resultRows = processed;
+
+    // Summary
+    document.getElementById('statTotal').textContent = zelleRows.length;
+    document.getElementById('statMatched').textContent = matchedCount;
+    document.getElementById('statUnmatched').textContent = unmatchedCount;
+    const listEl = document.getElementById('unmatchedList');
+    if (unmatchedCount > 0) {
+      listEl.innerHTML = unmatchedNames.map(u =>
+        `<li>
+          <div class="um-name">${u.name} <span class="um-amt">${fmtUSDinline(u.amount)}</span></div>
+          <div class="um-reason">${u.reason}</div>
+        </li>`
+      ).join('');
+      listEl.parentElement.classList.add('has-names');
+    } else {
+      listEl.innerHTML = '';
+      listEl.parentElement.classList.remove('has-names');
+    }
+    document.getElementById('statTotal2').textContent = '$' + runningTotal.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    document.getElementById('summaryGrid').classList.add('visible');
+    document.getElementById('summaryLabel').style.display = '';
+    document.getElementById('previewLabel').style.display = '';
+
+    // Preview
+    renderPreview(processed);
+
+    document.getElementById('downloadBtn').classList.add('visible');
+    setStep(3);
+    setStep(4);
+
+    log('=== Done! Review results below and download ===', 'ok');
+
+  } catch(err) {
+    log('Error: ' + err.message, 'err');
+    console.error(err);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🔄 Run Again';
+}
+
+// ─── Preview ──────────────────────────────────────────────────
+function renderPreview(rows) {
+  const wrap = document.getElementById('previewWrap');
+  wrap.classList.add('visible');
+  document.getElementById('previewCount').textContent = `${rows.length} rows`;
+
+  const table = document.getElementById('previewTable');
+  table.innerHTML = '';
+
+  // Header
+  const thead = table.createTHead();
+  const hrow = thead.insertRow();
+  ['Date','Name / Description','Memo','Amount','Running Total','Status'].forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    hrow.appendChild(th);
+  });
+
+  const tbody = table.createTBody();
+
+  rows.forEach((row, idx) => {
+    if (idx === separatorIndex && row.type === 'other') {
+      const sep = tbody.insertRow();
+      sep.className = 'separator-row';
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.textContent = '─── Other (Non-Zelle) ──────────────────────────────────────';
+      sep.appendChild(td);
+    }
+
+    const fmtAmt = v => (v !== '' && v != null) ? '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+    const tr = tbody.insertRow();
+    const cells = [
+      row.date,
+      row.name,
+      row.memo || '',
+      fmtAmt(row.amount),
+      row.total !== '' ? fmtAmt(row.total) : '',
+      row.type === 'zelle' ?
+        (row.matched
+          ? '<span class="tag tag-matched">Matched</span>'
+          : '<span class="tag tag-unmatched">Unmatched</span>')
+        : '<span class="tag tag-skipped">Other</span>'
+    ];
+    cells.forEach((val, ci) => {
+      const td = tr.insertCell();
+      if (ci === 5) td.innerHTML = val;
+      else { td.textContent = val; td.title = val; }
+    });
+  });
+}
+
+// ─── Download Excel ───────────────────────────────────────────
+function downloadExcel() {
+  const wb = XLSX.utils.book_new();
+
+  // USD cell format string — shows $ with 2 decimal places, comma separator
+  const USD_FMT = '"$"#,##0.00';
+
+  function applyUSD(ws, rowStart, colIndices, rowCount) {
+    for (let r = rowStart; r < rowStart + rowCount; r++) {
+      colIndices.forEach(c => {
+        const ref = XLSX.utils.encode_cell({r, c});
+        if (ws[ref] && typeof ws[ref].v === 'number') {
+          ws[ref].z = USD_FMT;
+          ws[ref].t = 'n';
+        }
+      });
+    }
+  }
+
+  // ── Sheet 1: Zelle (main) ──
+  const zelleData = [['Date','Name','Memo','Amount','Running Total']];
+  const zelleRows = resultRows.filter(r => r.type === 'zelle');
+  for (const row of zelleRows) {
+    zelleData.push([
+      row.date,
+      row.name,
+      row.memo,
+      row.amount,        // raw number — no $ string
+      row.total          // raw number — no $ string
+    ]);
+  }
+  const ws1 = XLSX.utils.aoa_to_sheet(zelleData);
+  ws1['!cols'] = [{wch:14},{wch:28},{wch:60},{wch:14},{wch:16}];
+  applyUSD(ws1, 1, [3, 4], zelleRows.length);
+  styleHeader(ws1, zelleData[0].length);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Zelle Donations');
+
+  // ── Sheet 2: Other rows ──
+  const otherRows = resultRows.filter(r => r.type === 'other');
+  if (otherRows.length > 0) {
+    const otherData = [['Date','Description','Amount']];
+    for (const row of otherRows) {
+      otherData.push([row.date, row.name, row.amount]);
+    }
+    const ws2 = XLSX.utils.aoa_to_sheet(otherData);
+    ws2['!cols'] = [{wch:14},{wch:60},{wch:12}];
+    applyUSD(ws2, 1, [2], otherRows.length);
+    styleHeader(ws2, otherData[0].length);
+    XLSX.utils.book_append_sheet(wb, ws2, 'Other Items');
+  }
+
+  // ── Sheet 3: Full combined ──
+  const fullData = [['Date','Name / Description','Memo','Amount','Running Total','Type']];
+  for (const row of resultRows) {
+    fullData.push([
+      row.date, row.name, row.memo,
+      row.amount,
+      row.total !== '' ? row.total : '',
+      row.type === 'zelle' ? 'Zelle' : 'Other'
+    ]);
+  }
+  const ws3 = XLSX.utils.aoa_to_sheet(fullData);
+  ws3['!cols'] = [{wch:14},{wch:28},{wch:60},{wch:14},{wch:16},{wch:8}];
+  applyUSD(ws3, 1, [3, 4], resultRows.length);
+  styleHeader(ws3, fullData[0].length);
+  XLSX.utils.book_append_sheet(wb, ws3, 'All');
+
+  // Filename with today's date
+  const today = toYMD(new Date());
+  XLSX.writeFile(wb, `Donation_Memo_Match_${today}.xlsx`);
+  log(`Downloaded: Donation_Memo_Match_${today}.xlsx`, 'ok');
+  setStep(4);
+}
+
+function styleHeader(ws, colCount) {
+  // Bold the header row cells
+  for (let c = 0; c < colCount; c++) {
+    const cellRef = XLSX.utils.encode_cell({r:0, c});
+    if (ws[cellRef]) {
+      ws[cellRef].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: 'E8F0FE' } }
+      };
+    }
+  }
+}
+
+// ─── Step indicator ───────────────────────────────────────────
+function setStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('step' + i);
+    el.classList.remove('active', 'done');
+    if (i < n) el.classList.add('done');
+    else if (i === n) el.classList.add('active');
+  }
+}
+</script>
+</body>
+</html>
