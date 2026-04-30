@@ -519,6 +519,50 @@ function dayDiff(a, b) {
   return Math.abs(Math.round((a - b) / 86400000));
 }
 
+const PDF_DATE_START_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/;
+const PDF_STATUS_RE = /(Completed|Delivered|Pending|Failed|Canceled|Cancelled|Expired)\b/i;
+const PDF_TYPE_RE = /(?:In\s*moments|Standard)/i;
+
+function cleanPdfMemo(value) {
+  if (!value) return '';
+  const parts = value.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  let memo = '';
+
+  for (const part of parts) {
+    if (!memo) {
+      memo = part;
+      continue;
+    }
+
+    const joinWrappedToken =
+      (/\d$/.test(memo) && /^\d/.test(part)) ||
+      (/[A-Za-z]$/.test(memo) && /^[a-z]/.test(part));
+
+    memo += joinWrappedToken ? part : ' ' + part;
+  }
+
+  return memo.replace(/\s{2,}/g, ' ').trim();
+}
+
+function extractQuotedMemo(txText) {
+  const memoMatch = txText.match(/"([\s\S]*?)"/);
+  return memoMatch ? cleanPdfMemo(memoMatch[1]) : '';
+}
+
+function extractPdfSender(fullBlock) {
+  const statusMatch = fullBlock.match(PDF_STATUS_RE);
+  if (!statusMatch) return '';
+
+  const afterStatus = fullBlock
+    .slice(statusMatch.index + statusMatch[0].length)
+    .replace(/"[\s\S]*?"/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const senderMatch = afterStatus.match(/^(.+?)\s*(?:In\s*moments|Standard)\s+\$/i);
+  return senderMatch ? senderMatch[1].replace(/\s+/g, ' ').trim() : '';
+}
+
 // ─── PDF Parsing ──────────────────────────────────────────────
 async function parsePdf(file) {
   const buf = await file.arrayBuffer();
@@ -570,7 +614,7 @@ function extractPdfRecords(rawText) {
     if (line.includes('Date received') && line.includes('Status')) { i++; continue; }
 
     // Check for date
-    const dateMatch = line.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec\s+\d{1,2},\s+\d{4})/);
+    const dateMatch = line.match(PDF_DATE_START_RE);
     if (!dateMatch) { i++; continue; }
 
     // Collect all lines for this transaction until next date or end
@@ -578,7 +622,7 @@ function extractPdfRecords(rawText) {
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
-      if (next.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/)) break;
+      if (next.match(PDF_DATE_START_RE)) break;
       txLines.push(next);
       j++;
     }
@@ -593,48 +637,16 @@ function extractPdfRecords(rawText) {
     const txDate = parsePdfDate(dateStr);
 
     // Extract amount (last $ value)
+    const typeAmountMatch = fullBlock.match(new RegExp(PDF_TYPE_RE.source + '\\s+\\$([\\d,]+\\.\\d{2})', 'i'));
     const amounts = [...fullBlock.matchAll(/\$([\d,]+\.\d{2})/g)];
-    if (!amounts.length) { i = j; continue; }
-    const amountStr = amounts[amounts.length - 1][1].replace(/,/g, '');
+    if (!typeAmountMatch && !amounts.length) { i = j; continue; }
+    const amountStr = (typeAmountMatch ? typeAmountMatch[1] : amounts[amounts.length - 1][1]).replace(/,/g, '');
     const amount = parseFloat(amountStr);
     if (amount < 0) { i = j; continue; } // skip refunds
 
-    // Extract sender name: between "Completed" and "In moments"
-    const senderMatch = fullBlock.match(/Completed\s+"[^"]*"\s+([A-Z][A-Za-z\s\-]+?)\s+In moments/s) ||
-                        fullBlock.match(/Completed\s+([A-Z][A-Za-z\s\-]+?)\s+In moments/s);
-    const sender = senderMatch ? senderMatch[1].trim() : '';
-
-    // Extract memo from individual txLines to avoid cross-transaction bleed (Bug 2 fix)
-    // Look for a line that starts and ends with quotes, or accumulate quoted fragments
-    let memo = '';
-    let memoAccum = '';
-    let inMemo = false;
-    for (const tl of txLines) {
-      const trimmed = tl.trim();
-      if (!inMemo) {
-        // Line starts a quoted memo
-        if (trimmed.startsWith('"')) {
-          inMemo = true;
-          memoAccum = trimmed.slice(1); // strip leading quote
-          if (trimmed.endsWith('"') && trimmed.length > 1) {
-            // Whole memo on one line
-            memo = memoAccum.slice(0, -1).trim(); // strip trailing quote
-            break;
-          }
-        }
-      } else {
-        // Continuation of multi-line memo
-        if (trimmed.endsWith('"')) {
-          memoAccum += trimmed.slice(0, -1); // strip trailing quote
-          memo = memoAccum.trim();
-          break;
-        } else {
-          memoAccum += trimmed;
-        }
-      }
-    }
-    // Collapse internal whitespace/newlines without adding spaces (Bug 3 fix)
-    memo = memo.split(/\s*\n\s*/).map(s => s.trim()).join('').replace(/\s{2,}/g, ' ').trim();
+    // Extract sender and memo from the normalized transaction block
+    const sender = extractPdfSender(fullBlock);
+    const memo = extractQuotedMemo(txLines.join('\n'));
 
     records.push({ date: txDate, dateStr, sender, amount, memo });
     i = j;
@@ -787,11 +799,11 @@ async function runAll() {
       // Diagnostic: track which conditions passed for closest partial matches
       let nameMatched = false;      // any PDF record matched name
       let nameAmtMatched = false;   // any PDF record matched name + amount
+      let missingMemo = false;      // PDF record matched, but memo is blank
       let alreadyUsed = false;      // best candidate was already used by another row
 
       for (let pi = 0; pi < pdfRecords.length; pi++) {
         const pr = pdfRecords[pi];
-        if (!pr.memo) continue;
 
         const nameOk   = namesMatch(donorName, pr.sender);
         const amountOk = Math.abs(pr.amount - amount) < 0.01;
@@ -802,6 +814,7 @@ async function runAll() {
         if (nameOk && amountOk) nameAmtMatched = true;
 
         if (!nameOk || !amountOk || !dateOk) continue;
+        if (!pr.memo) { missingMemo = true; continue; }
 
         // All 3 pass — check if already used
         if (usedPdfIdx.has(pi)) {
@@ -823,7 +836,9 @@ async function runAll() {
         unmatchedCount++;
         // Determine the most specific failure reason
         let reason;
-        if (alreadyUsed) {
+        if (missingMemo) {
+          reason = 'PDF entry found, but no memo was entered';
+        } else if (alreadyUsed) {
           reason = 'Duplicate name & amount — PDF memo already used';
         } else if (nameAmtMatched) {
           reason = 'Date mismatch (exceeds ±2 days)';
