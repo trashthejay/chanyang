@@ -946,12 +946,12 @@ function extractPdfRecords(rawText) {
     const amount = parseFloat(amountStr);
     if (amount < 0) { i = j; continue; }
 
-    // Chase table layout: sender name sits between status and dollar amount.
-    // Use $ as terminator so both old ("NAME In moments") and new ("NAME $amt") layouts match.
-    const senderMatch = fullBlock.match(/(?:Completed|Delivered)\s+"[^"]*"\s+([A-Z][A-Za-z\s\-\.]+?)\s+\$/) ||
-                        fullBlock.match(/(?:Completed|Delivered)\s+([A-Z][A-Za-z\s\-\.]+?)\s+\$/) ||
-                        fullBlock.match(/(?:Completed|Delivered)\s+"[^"]*"\s+([A-Z][A-Za-z\s\-\.]+?)\s+In moments/s) ||
-                        fullBlock.match(/(?:Completed|Delivered)\s+([A-Z][A-Za-z\s\-\.]+?)\s+In moments/s);
+    // Chase PDF has two layouts depending on the month:
+    //   Layout A (May+): "Completed NAME In moments $100.00"  — "In moments" comes BEFORE "$"
+    //   Layout B (April): "Completed NAME $100.00"            — "$" comes BEFORE "In moments"
+    // Use a lookahead to stop capture at WHICHEVER comes first: "In moments" OR "$"
+    const senderMatch = fullBlock.match(/(?:Completed|Delivered)\s+"[^"]*"\s+([A-Z][A-Za-z\s\-\.]+?)(?=\s+In moments|\s+\$)/) ||
+                        fullBlock.match(/(?:Completed|Delivered)\s+([A-Z][A-Za-z\s\-\.]+?)(?=\s+In moments|\s+\$)/);
     const sender = senderMatch ? senderMatch[1].trim() : '';
 
     let memo = '';
