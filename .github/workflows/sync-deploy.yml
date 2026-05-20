@@ -1,0 +1,26 @@
+name: Sync Church_finance.html → index.html
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Church_finance.html'   # Church_finance.html 이 바뀔 때만 실행
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy Church_finance.html to index.html
+        run: cp Church_finance.html index.html
+
+      - name: Commit if index.html changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && echo "No changes" || git commit -m "chore: auto-sync index.html from Church_finance.html"
+          git push
