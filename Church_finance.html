@@ -998,41 +998,68 @@ function extractPdfRecords(rawText) {
   }
 
   // ── Second pass: recover orphaned memos ───────────────────────
-  // When an entry ends at the bottom of a page, its memo may appear
-  // at a low y-coordinate on the next page — BELOW other entries —
-  // so it lands after the next date-line in the sorted text.
-  // Find any unconsumed quoted lines and attribute them to the most
-  // recent preceding record that still has no memo.
+  // Handles two cases:
+  //   A) Quoted line that appears after the next entry's date line (cross-page)
+  //   B) Unquoted Korean-character line not captured in the first pass
+  const DATE_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/;
+  const KOREAN_RE = /[가-힣ᄀ-ᇿ㄰-㆏]/;
+  const orphanedLines = []; // for diagnostics
+
   for (let k = 0; k < lines.length; k++) {
     if (consumed[k]) continue;
     const line = lines[k];
-    if (!line.startsWith('"')) continue;
+    if (!line) continue;
 
-    // Collect the full orphaned memo (may span multiple unconsumed lines)
+    const isQuoted  = line.startsWith('"');
+    const isKorean  = KOREAN_RE.test(line);
+    const isDateLine = DATE_RE.test(line);
+
+    if (!isQuoted && !isKorean) {
+      // Log unrecognised unconsumed lines for diagnostics
+      if (!isDateLine && line.length > 3) orphanedLines.push(`[skipped] ${line}`);
+      continue;
+    }
+
+    orphanedLines.push(`[orphan] ${line}`);
+
+    // Collect full memo text (multi-line quoted or plain Korean)
     let orphanMemo = '';
-    if (line.endsWith('"') && line.length > 1) {
-      orphanMemo = line.slice(1, -1).trim();
-      consumed[k] = true;
-    } else {
-      let accum = line.slice(1);
-      let mk = k + 1;
-      while (mk < lines.length && !consumed[mk]) {
-        const nxt = lines[mk];
-        if (nxt.endsWith('"')) {
-          accum += ' ' + nxt.slice(0, -1);
-          orphanMemo = accum.trim();
-          for (let x = k; x <= mk; x++) consumed[x] = true;
-          break;
+    if (isQuoted) {
+      if (line.endsWith('"') && line.length > 1) {
+        orphanMemo = line.slice(1, -1).trim();
+        consumed[k] = true;
+      } else {
+        let accum = line.slice(1);
+        let mk = k + 1;
+        while (mk < lines.length && !consumed[mk]) {
+          const nxt = lines[mk];
+          if (nxt.endsWith('"')) {
+            accum += ' ' + nxt.slice(0, -1);
+            orphanMemo = accum.trim();
+            for (let x = k; x <= mk; x++) consumed[x] = true;
+            break;
+          }
+          accum += ' ' + nxt;
+          mk++;
         }
-        accum += ' ' + nxt;
+        if (!orphanMemo) { orphanMemo = accum.trim(); consumed[k] = true; }
+      }
+    } else {
+      // Unquoted Korean line — collect contiguous Korean/unconsumed lines
+      let accum = line;
+      consumed[k] = true;
+      let mk = k + 1;
+      while (mk < lines.length && !consumed[mk] && !DATE_RE.test(lines[mk])) {
+        accum += ' ' + lines[mk];
+        consumed[mk] = true;
         mk++;
       }
-      if (!orphanMemo) { orphanMemo = accum.trim(); consumed[k] = true; }
+      orphanMemo = accum.trim();
     }
 
     if (!orphanMemo) continue;
 
-    // Assign to the most recent record before this line that has no memo
+    // Assign to the most recent record before this position that has no memo
     let bestRec = null;
     for (const rec of records) {
       if (rec.memo) continue;
@@ -1044,7 +1071,7 @@ function extractPdfRecords(rawText) {
   // Strip internal tracking fields before returning
   for (const rec of records) { delete rec._startIdx; delete rec._endIdx; }
 
-  return records;
+  return { records, orphanedLines };
 }
 
 // ─── CSV Parsing ──────────────────────────────────────────────
@@ -1123,15 +1150,20 @@ async function runAll() {
   try {
     log('Analyzing PDF file...', 'info');
     const pdfText = await parsePdf(pdfFile);
-    const pdfRecords = extractPdfRecords(pdfText);
+    const { records: pdfRecords, orphanedLines } = extractPdfRecords(pdfText);
     log(`PDF: ${pdfRecords.length} records extracted`, pdfRecords.length > 0 ? 'ok' : 'err');
     if (pdfRecords.length === 0) throw new Error('Could not extract data from PDF. Please ensure the PDF is text-based, not a scanned image.');
 
-    // ── Diagnostic: show every record's memo (helps debug Korean/empty memo issues)
+    // ── Diagnostic: show every record's memo
     pdfRecords.forEach((r, i) => {
       const memoStr = r.memo ? `"${r.memo}"` : '(no memo)';
       log(`  PDF[${i+1}] ${r.sender} $${r.amount} → ${memoStr}`, 'info');
     });
+    // ── Diagnostic: show orphaned (uncaptured) lines
+    if (orphanedLines.length > 0) {
+      log(`Orphaned lines (${orphanedLines.length}):`, 'info');
+      orphanedLines.forEach(l => log(`  ${l}`, 'info'));
+    }
 
     log('Analyzing CSV file...', 'info');
     const csvText = await csvFile.text();
@@ -1475,8 +1507,8 @@ function setStep(n) {
   }
 }
 // ─── Version info ─────────────────────────────────────────────
-const APP_VERSION   = 'v2.6-diag';
-const DEPLOY_TIME   = '2026-05-20 08:26 PM ET';
+const APP_VERSION   = 'v2.7-diag';
+const DEPLOY_TIME   = '2026-05-20 09:18 PM ET';
 document.addEventListener('DOMContentLoaded', () => {
   const vEl = document.getElementById('versionBadge');
   if (vEl) vEl.textContent = `${APP_VERSION} · deployed ${DEPLOY_TIME}`;
