@@ -1128,18 +1128,39 @@ async function runAll() {
     const dataRows = csvRows.slice(1).filter(r => r.some(c => c.length > 0));
     log(`CSV: ${dataRows.length} rows loaded`, 'ok');
 
+    // ── Auto-detect CSV column layout from header row ─────────────
+    const hdrs = (csvRows[0] || []).map(h => h.toLowerCase().trim());
+    log(`CSV headers: ${hdrs.join(' | ')}`, 'info');
+    if (dataRows.length > 0) log(`CSV row[0]: ${dataRows[0].join(' | ')}`, 'info');
+
+    // Find column indices by header name (handles both Chase CSV formats)
+    const colDate   = hdrs.findIndex(h => h.includes('posting date') || h.includes('transaction date') || h.includes('date'));
+    const colDesc   = hdrs.findIndex(h => h.includes('description') || h.includes('desc'));
+    const colAmt    = hdrs.findIndex(h => h.includes('amount'));
+    log(`CSV columns detected — date:${colDate} desc:${colDesc} amount:${colAmt}`, 'info');
+
+    // Fallback to old hardcoded positions if auto-detect failed
+    const iDate = colDate  >= 0 ? colDate  : 1;
+    const iDesc = colDesc  >= 0 ? colDesc  : 2;
+    const iAmt  = colAmt   >= 0 ? colAmt   : 3;
+
     const zelleRows = [], otherRows = [];
     for (const row of dataRows) {
-      const details = (row[0] || '').toUpperCase();
-      const desc    = (row[2] || '');
-      const isCredit = details === 'CREDIT';
-      const isZelle  = /^zelle\s+payment/i.test(desc);
-      if (isCredit && isZelle) zelleRows.push(row);
-      else otherRows.push(row);
+      const desc   = row[iDesc] || '';
+      const rawAmt = row[iAmt]  || '';
+      const isZelle  = /zelle\s+payment/i.test(desc);
+      const amount   = parseFloat(String(rawAmt).replace(/[$,]/g, ''));
+      const isCredit = !isNaN(amount) && amount > 0;
+      if (isZelle && isCredit) zelleRows.push(row);
+      else if (row.some(c => c.length > 0)) otherRows.push(row);
     }
 
     if (zelleRows.length === 0) {
-      throw new Error('No Zelle payment rows found in CSV. Make sure the CSV has "Zelle payment from" entries in the Description column with "CREDIT" in the Details column.');
+      const hasZelleAnywhere = dataRows.some(r => /zelle/i.test(r.join('|')));
+      if (hasZelleAnywhere) {
+        throw new Error('Found Zelle entries but none are credits (positive amount). Check the CSV format.');
+      }
+      throw new Error('No Zelle payment rows found in CSV. Make sure the CSV has "Zelle payment from" entries in the Description column.');
     }
 
     log(`Zelle rows: ${zelleRows.length}, Other: ${otherRows.length}`, 'ok');
@@ -1152,9 +1173,9 @@ async function runAll() {
     const unmatchedNames = [];
 
     for (const row of zelleRows) {
-      const rawDate   = row[1] || '';
-      const desc      = row[2] || '';
-      const rawAmount = row[3] || '';
+      const rawDate   = row[iDate] || '';
+      const desc      = row[iDesc] || '';
+      const rawAmount = row[iAmt]  || '';
 
       const csvDate = parseCsvDate(rawDate);
       const dateFormatted = toYMD(csvDate);
@@ -1209,9 +1230,9 @@ async function runAll() {
     log(`Matching complete: ${matchedCount} matched, ${unmatchedCount} unmatched`, 'ok');
 
     for (const row of otherRows) {
-      const csvDate = parseCsvDate(row[1] || '');
-      const amount  = parseFloat(String(row[3] || '').replace(/[$,]/g, '')) || 0;
-      processed.push({ type:'other', date:toYMD(csvDate), name:row[2]||'', amount, memo:'', total:'', matched:false });
+      const csvDate = parseCsvDate(row[iDate] || '');
+      const amount  = parseFloat(String(row[iAmt] || '').replace(/[$,]/g, '')) || 0;
+      processed.push({ type:'other', date:toYMD(csvDate), name:row[iDesc]||'', amount, memo:'', total:'', matched:false });
     }
 
     resultRows = processed;
