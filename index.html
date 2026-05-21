@@ -905,7 +905,12 @@ async function parsePdf(file) {
     const sortedYs = Object.keys(lines).map(Number).sort((a,b) => b-a);
     sortedYs.forEach(y => {
       const row = lines[y].sort((a,b) => a.x - b.x);
-      allText += row.map(r => r.text).join(' ') + '\n';
+      // Normalize curly/smart quotes (U+201C " U+201D " U+2018 ' U+2019 ')
+      // to straight ASCII quotes so memo detection works for all languages.
+      const rowText = row.map(r => r.text).join(' ')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'");
+      allText += rowText + '\n';
     });
   }
   return allText;
@@ -1464,8 +1469,8 @@ function setStep(n) {
   }
 }
 // ─── Version info ─────────────────────────────────────────────
-const APP_VERSION   = 'v2.4';
-const DEPLOY_TIME   = '2026-05-20 08:10 PM ET';
+const APP_VERSION   = 'v2.5';
+const DEPLOY_TIME   = '2026-05-20 08:19 PM ET';
 document.addEventListener('DOMContentLoaded', () => {
   const vEl = document.getElementById('versionBadge');
   if (vEl) vEl.textContent = `${APP_VERSION} · deployed ${DEPLOY_TIME}`;
