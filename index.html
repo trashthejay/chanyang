@@ -887,7 +887,8 @@ function dayDiff(a, b) {
 async function parsePdf(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buf}).promise;
-  let allText = '';
+  let allText = ‘’;
+  const KOREAN_RE2 = /[가-힣ᄀ-ᇿ]/;
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const tc = await page.getTextContent();
@@ -905,12 +906,17 @@ async function parsePdf(file) {
     const sortedYs = Object.keys(lines).map(Number).sort((a,b) => b-a);
     sortedYs.forEach(y => {
       const row = lines[y].sort((a,b) => a.x - b.x);
-      // Normalize curly/smart quotes (U+201C " U+201D " U+2018 ' U+2019 ')
+      // Log each raw text item so we can diagnose Korean extraction
+      const rawItems = row.map(r => r.text);
+      if (rawItems.some(t => KOREAN_RE2.test(t) || t.includes(‘“’) || t.includes(‘”’) || t === ‘”’)) {
+        log(`  [raw p${i} y=${y}] items: ${rawItems.map(t => JSON.stringify(t)).join(‘ | ‘)}`, ‘info’);
+      }
+      // Normalize curly/smart quotes (U+201C “ U+201D “ U+2018 ‘ U+2019 ‘)
       // to straight ASCII quotes so memo detection works for all languages.
-      const rowText = row.map(r => r.text).join(' ')
-        .replace(/[“”]/g, '"')
-        .replace(/[‘’]/g, "'");
-      allText += rowText + '\n';
+      const rowText = rawItems.join(‘ ‘)
+        .replace(/[“”]/g, ‘”’)
+        .replace(/[‘’]/g, “’”);
+      allText += rowText + ‘\n’;
     });
   }
   return allText;
@@ -1507,8 +1513,8 @@ function setStep(n) {
   }
 }
 // ─── Version info ─────────────────────────────────────────────
-const APP_VERSION   = 'v2.7-diag';
-const DEPLOY_TIME   = '2026-05-20 09:18 PM ET';
+const APP_VERSION   = 'v2.8-diag';
+const DEPLOY_TIME   = '2026-05-20 09:28 PM ET';
 document.addEventListener('DOMContentLoaded', () => {
   const vEl = document.getElementById('versionBadge');
   if (vEl) vEl.textContent = `${APP_VERSION} · deployed ${DEPLOY_TIME}`;
