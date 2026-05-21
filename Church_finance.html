@@ -887,8 +887,7 @@ function dayDiff(a, b) {
 async function parsePdf(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buf}).promise;
-  let allText = ‘’;
-  const KOREAN_RE2 = /[가-힣ᄀ-ᇿ]/;
+  let allText = '';
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const tc = await page.getTextContent();
@@ -906,17 +905,12 @@ async function parsePdf(file) {
     const sortedYs = Object.keys(lines).map(Number).sort((a,b) => b-a);
     sortedYs.forEach(y => {
       const row = lines[y].sort((a,b) => a.x - b.x);
-      // Log each raw text item so we can diagnose Korean extraction
-      const rawItems = row.map(r => r.text);
-      if (rawItems.some(t => KOREAN_RE2.test(t) || t.includes(‘“’) || t.includes(‘”’) || t === ‘”’)) {
-        log(`  [raw p${i} y=${y}] items: ${rawItems.map(t => JSON.stringify(t)).join(‘ | ‘)}`, ‘info’);
-      }
-      // Normalize curly/smart quotes (U+201C “ U+201D “ U+2018 ‘ U+2019 ‘)
+      // Normalize curly/smart quotes (U+201C " U+201D " U+2018 ' U+2019 ')
       // to straight ASCII quotes so memo detection works for all languages.
-      const rowText = rawItems.join(‘ ‘)
-        .replace(/[“”]/g, ‘”’)
-        .replace(/[‘’]/g, “’”);
-      allText += rowText + ‘\n’;
+      const rowText = row.map(r => r.text).join(' ')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'");
+      allText += rowText + '\n';
     });
   }
   return allText;
@@ -1004,68 +998,41 @@ function extractPdfRecords(rawText) {
   }
 
   // ── Second pass: recover orphaned memos ───────────────────────
-  // Handles two cases:
-  //   A) Quoted line that appears after the next entry's date line (cross-page)
-  //   B) Unquoted Korean-character line not captured in the first pass
-  const DATE_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/;
-  const KOREAN_RE = /[가-힣ᄀ-ᇿ㄰-㆏]/;
-  const orphanedLines = []; // for diagnostics
-
+  // When an entry ends at the bottom of a page, its memo may appear
+  // at a low y-coordinate on the next page — BELOW other entries —
+  // so it lands after the next date-line in the sorted text.
+  // Find any unconsumed quoted lines and attribute them to the most
+  // recent preceding record that still has no memo.
   for (let k = 0; k < lines.length; k++) {
     if (consumed[k]) continue;
     const line = lines[k];
-    if (!line) continue;
+    if (!line.startsWith('"')) continue;
 
-    const isQuoted  = line.startsWith('"');
-    const isKorean  = KOREAN_RE.test(line);
-    const isDateLine = DATE_RE.test(line);
-
-    if (!isQuoted && !isKorean) {
-      // Log unrecognised unconsumed lines for diagnostics
-      if (!isDateLine && line.length > 3) orphanedLines.push(`[skipped] ${line}`);
-      continue;
-    }
-
-    orphanedLines.push(`[orphan] ${line}`);
-
-    // Collect full memo text (multi-line quoted or plain Korean)
+    // Collect the full orphaned memo (may span multiple unconsumed lines)
     let orphanMemo = '';
-    if (isQuoted) {
-      if (line.endsWith('"') && line.length > 1) {
-        orphanMemo = line.slice(1, -1).trim();
-        consumed[k] = true;
-      } else {
-        let accum = line.slice(1);
-        let mk = k + 1;
-        while (mk < lines.length && !consumed[mk]) {
-          const nxt = lines[mk];
-          if (nxt.endsWith('"')) {
-            accum += ' ' + nxt.slice(0, -1);
-            orphanMemo = accum.trim();
-            for (let x = k; x <= mk; x++) consumed[x] = true;
-            break;
-          }
-          accum += ' ' + nxt;
-          mk++;
-        }
-        if (!orphanMemo) { orphanMemo = accum.trim(); consumed[k] = true; }
-      }
-    } else {
-      // Unquoted Korean line — collect contiguous Korean/unconsumed lines
-      let accum = line;
+    if (line.endsWith('"') && line.length > 1) {
+      orphanMemo = line.slice(1, -1).trim();
       consumed[k] = true;
+    } else {
+      let accum = line.slice(1);
       let mk = k + 1;
-      while (mk < lines.length && !consumed[mk] && !DATE_RE.test(lines[mk])) {
-        accum += ' ' + lines[mk];
-        consumed[mk] = true;
+      while (mk < lines.length && !consumed[mk]) {
+        const nxt = lines[mk];
+        if (nxt.endsWith('"')) {
+          accum += ' ' + nxt.slice(0, -1);
+          orphanMemo = accum.trim();
+          for (let x = k; x <= mk; x++) consumed[x] = true;
+          break;
+        }
+        accum += ' ' + nxt;
         mk++;
       }
-      orphanMemo = accum.trim();
+      if (!orphanMemo) { orphanMemo = accum.trim(); consumed[k] = true; }
     }
 
     if (!orphanMemo) continue;
 
-    // Assign to the most recent record before this position that has no memo
+    // Assign to the most recent record before this line that has no memo
     let bestRec = null;
     for (const rec of records) {
       if (rec.memo) continue;
@@ -1077,7 +1044,7 @@ function extractPdfRecords(rawText) {
   // Strip internal tracking fields before returning
   for (const rec of records) { delete rec._startIdx; delete rec._endIdx; }
 
-  return { records, orphanedLines };
+  return records;
 }
 
 // ─── CSV Parsing ──────────────────────────────────────────────
@@ -1156,20 +1123,9 @@ async function runAll() {
   try {
     log('Analyzing PDF file...', 'info');
     const pdfText = await parsePdf(pdfFile);
-    const { records: pdfRecords, orphanedLines } = extractPdfRecords(pdfText);
+    const pdfRecords = extractPdfRecords(pdfText);
     log(`PDF: ${pdfRecords.length} records extracted`, pdfRecords.length > 0 ? 'ok' : 'err');
     if (pdfRecords.length === 0) throw new Error('Could not extract data from PDF. Please ensure the PDF is text-based, not a scanned image.');
-
-    // ── Diagnostic: show every record's memo
-    pdfRecords.forEach((r, i) => {
-      const memoStr = r.memo ? `"${r.memo}"` : '(no memo)';
-      log(`  PDF[${i+1}] ${r.sender} $${r.amount} → ${memoStr}`, 'info');
-    });
-    // ── Diagnostic: show orphaned (uncaptured) lines
-    if (orphanedLines.length > 0) {
-      log(`Orphaned lines (${orphanedLines.length}):`, 'info');
-      orphanedLines.forEach(l => log(`  ${l}`, 'info'));
-    }
 
     log('Analyzing CSV file...', 'info');
     const csvText = await csvFile.text();
@@ -1179,14 +1135,10 @@ async function runAll() {
 
     // ── Auto-detect CSV column layout from header row ─────────────
     const hdrs = (csvRows[0] || []).map(h => h.toLowerCase().trim());
-    log(`CSV headers: ${hdrs.join(' | ')}`, 'info');
-    if (dataRows.length > 0) log(`CSV row[0]: ${dataRows[0].join(' | ')}`, 'info');
-
     // Find column indices by header name (handles both Chase CSV formats)
     const colDate   = hdrs.findIndex(h => h.includes('posting date') || h.includes('transaction date') || h.includes('date'));
     const colDesc   = hdrs.findIndex(h => h.includes('description') || h.includes('desc'));
     const colAmt    = hdrs.findIndex(h => h.includes('amount'));
-    log(`CSV columns detected — date:${colDate} desc:${colDesc} amount:${colAmt}`, 'info');
 
     // Fallback to old hardcoded positions if auto-detect failed
     const iDate = colDate  >= 0 ? colDate  : 1;
@@ -1512,12 +1464,13 @@ function setStep(n) {
     else if (i === n) el.classList.add('active');
   }
 }
+// ─── Version info ─────────────────────────────────────────────
 </script>
 
 <div style="
   position:fixed; bottom:10px; right:14px;
   font-family:'Roboto',sans-serif; font-size:11px;
-  color:#9aa0a6; letter-spacing:.3px; pointer-events:none; z-index:1;
-">v2.8-diag · deployed 2026-05-20 09:28 PM ET</div>
+  color:#9aa0a6; letter-spacing:.3px; pointer-events:none; z-index:9999;
+">v2.6 · deployed 2026-05-20 09:45 PM ET</div>
 </body>
 </html>
