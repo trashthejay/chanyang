@@ -914,16 +914,20 @@ async function parsePdf(file) {
 function extractPdfRecords(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const records = [];
+  // Track which line indices are consumed by normal (in-block) parsing
+  const consumed = new Array(lines.length).fill(false);
 
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
 
-    if (line.includes('Date received') && line.includes('Status')) { i++; continue; }
+    if (line.includes('Date received') && line.includes('Status')) { consumed[i] = true; i++; continue; }
 
-    const dateMatch = line.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec\s+\d{1,2},\s+\d{4})/);
+    // Must start with a full date (Month DD, YYYY) to begin an entry
+    const dateMatch = line.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/);
     if (!dateMatch) { i++; continue; }
 
+    const startIdx = i;
     const txLines = [line];
     let j = i + 1;
     while (j < lines.length) {
@@ -932,6 +936,10 @@ function extractPdfRecords(rawText) {
       txLines.push(next);
       j++;
     }
+    const endIdx = j; // exclusive
+
+    // Mark all lines in this block as consumed
+    for (let k = startIdx; k < endIdx; k++) consumed[k] = true;
 
     const fullBlock = txLines.join(' ');
 
@@ -980,9 +988,56 @@ function extractPdfRecords(rawText) {
     }
     memo = memo.split(/\s*\n\s*/).map(s => s.trim()).join('').replace(/\s{2,}/g, ' ').trim();
 
-    records.push({ date: txDate, dateStr, sender, amount, memo });
+    records.push({ date: txDate, dateStr, sender, amount, memo, _startIdx: startIdx, _endIdx: endIdx });
     i = j;
   }
+
+  // ── Second pass: recover orphaned memos ───────────────────────
+  // When an entry ends at the bottom of a page, its memo may appear
+  // at a low y-coordinate on the next page — BELOW other entries —
+  // so it lands after the next date-line in the sorted text.
+  // Find any unconsumed quoted lines and attribute them to the most
+  // recent preceding record that still has no memo.
+  for (let k = 0; k < lines.length; k++) {
+    if (consumed[k]) continue;
+    const line = lines[k];
+    if (!line.startsWith('"')) continue;
+
+    // Collect the full orphaned memo (may span multiple unconsumed lines)
+    let orphanMemo = '';
+    if (line.endsWith('"') && line.length > 1) {
+      orphanMemo = line.slice(1, -1).trim();
+      consumed[k] = true;
+    } else {
+      let accum = line.slice(1);
+      let mk = k + 1;
+      while (mk < lines.length && !consumed[mk]) {
+        const nxt = lines[mk];
+        if (nxt.endsWith('"')) {
+          accum += ' ' + nxt.slice(0, -1);
+          orphanMemo = accum.trim();
+          for (let x = k; x <= mk; x++) consumed[x] = true;
+          break;
+        }
+        accum += ' ' + nxt;
+        mk++;
+      }
+      if (!orphanMemo) { orphanMemo = accum.trim(); consumed[k] = true; }
+    }
+
+    if (!orphanMemo) continue;
+
+    // Assign to the most recent record before this line that has no memo
+    let bestRec = null;
+    for (const rec of records) {
+      if (rec.memo) continue;
+      if (rec._endIdx <= k) bestRec = rec;
+    }
+    if (bestRec) bestRec.memo = orphanMemo;
+  }
+
+  // Strip internal tracking fields before returning
+  for (const rec of records) { delete rec._startIdx; delete rec._endIdx; }
 
   return records;
 }
