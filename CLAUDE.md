@@ -18,6 +18,15 @@ git push
 - `git pull --rebase` (causes --ours/--theirs confusion)
 - `git push --force`
 - Edit `index.html` directly
+- Delete `.nojekyll` from repo root (it disables Jekyll; without it, JS `{{...}}` patterns crash the GitHub Pages build and the deployed site stays stuck on an old version)
+
+## 🚨 If deployed site doesn't update after push
+
+Don't assume browser cache. First verify Pages built successfully:
+```bash
+curl -s "https://api.github.com/repos/trashthejay/chanyang/actions/runs?per_page=5"
+```
+Look for `pages build and deployment` → `failure`. Common cause: `.nojekyll` missing.
 
 The GitHub Action `.github/workflows/sync-deploy.yml` automatically copies
 Church_finance.html → index.html after every push. You never touch index.html.
