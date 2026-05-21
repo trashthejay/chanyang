@@ -1127,6 +1127,12 @@ async function runAll() {
     log(`PDF: ${pdfRecords.length} records extracted`, pdfRecords.length > 0 ? 'ok' : 'err');
     if (pdfRecords.length === 0) throw new Error('Could not extract data from PDF. Please ensure the PDF is text-based, not a scanned image.');
 
+    // ── Diagnostic: show every record's memo (helps debug Korean/empty memo issues)
+    pdfRecords.forEach((r, i) => {
+      const memoStr = r.memo ? `"${r.memo}"` : '(no memo)';
+      log(`  PDF[${i+1}] ${r.sender} $${r.amount} → ${memoStr}`, 'info');
+    });
+
     log('Analyzing CSV file...', 'info');
     const csvText = await csvFile.text();
     const csvRows = parseCsv(csvText);
@@ -1469,8 +1475,8 @@ function setStep(n) {
   }
 }
 // ─── Version info ─────────────────────────────────────────────
-const APP_VERSION   = 'v2.5';
-const DEPLOY_TIME   = '2026-05-20 08:19 PM ET';
+const APP_VERSION   = 'v2.6-diag';
+const DEPLOY_TIME   = '2026-05-20 08:26 PM ET';
 document.addEventListener('DOMContentLoaded', () => {
   const vEl = document.getElementById('versionBadge');
   if (vEl) vEl.textContent = `${APP_VERSION} · deployed ${DEPLOY_TIME}`;
