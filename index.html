@@ -1189,7 +1189,7 @@ async function runAll() {
 
       for (let pi = 0; pi < pdfRecords.length; pi++) {
         const pr = pdfRecords[pi];
-        if (!pr.memo) continue;
+        // Match on name+amount+date regardless of memo (memo may be absent or Korean)
 
         const nameOk   = namesMatch(donorName, pr.sender);
         const amountOk = Math.abs(pr.amount - amount) < 0.01;
@@ -1463,6 +1463,19 @@ function setStep(n) {
     else if (i === n) el.classList.add('active');
   }
 }
+// ─── Version info ─────────────────────────────────────────────
+const APP_VERSION   = 'v2.4';
+const DEPLOY_TIME   = '2026-05-20 08:10 PM ET';
+document.addEventListener('DOMContentLoaded', () => {
+  const vEl = document.getElementById('versionBadge');
+  if (vEl) vEl.textContent = `${APP_VERSION} · deployed ${DEPLOY_TIME}`;
+});
 </script>
+
+<div id="versionBadge" style="
+  position:fixed; bottom:10px; right:14px;
+  font-family:'Roboto',sans-serif; font-size:11px;
+  color:#9aa0a6; letter-spacing:.3px; pointer-events:none; z-index:1;
+"></div>
 </body>
 </html>
